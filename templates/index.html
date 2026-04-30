@@ -2,64 +2,35 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Trading Bot Dashboard</title>
+    <title>AI Bot Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-900 text-white min-h-screen p-4 md:p-8">
-    <div class="max-w-2xl mx-auto">
-        <h1 class="text-3xl font-bold mb-6 text-center text-blue-400">🤖 AI Paper Trading Bot</h1>
+<body class="bg-gray-900 text-white p-6">
+    <div class="max-w-md mx-auto">
+        <h1 class="text-2xl font-bold mb-4 text-blue-400">🤖 AI Trading Bot</h1>
         
-        <div class="bg-gray-800 p-4 rounded-lg mb-4 border-l-4 border-blue-500 shadow-lg">
-            <p class="text-sm text-gray-400">Aktualny status:</p>
-            <p id="status-text" class="text-lg font-bold text-blue-300">Ładowanie...</p>
+        <div class="bg-gray-800 p-4 rounded mb-4">
+            <p class="text-gray-400 text-xs">STATUS:</p>
+            <p id="status" class="text-xl font-bold text-yellow-500">Ładowanie...</p>
         </div>
 
-        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6 text-center">
-            <h2 class="text-xl font-semibold mb-2 text-gray-300">Stan Konta</h2>
-            <p class="text-4xl font-mono text-green-400">$ <span id="balance">1000.00</span></p>
-        </div>
-
-        <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-            <h2 class="text-xl font-semibold mb-4 text-gray-300">Ostatnie transakcje</h2>
-            <ul id="trades" class="space-y-2">
-                <li class="text-gray-500 italic">Brak danych...</li>
-            </ul>
+        <div class="bg-gray-800 p-4 rounded mb-4">
+            <p class="text-gray-400 text-xs">SALDO:</p>
+            <p class="text-2xl">$ <span id="balance">1000.00</span></p>
         </div>
     </div>
 
     <script>
-        async function updateStats() {
-            try {
-                const res = await fetch('/api/stats');
-                const data = await res.json();
-                
-                // Aktualizacja statusu
-                document.getElementById('status-text').innerText = data.status;
-                // Aktualizacja salda
-                document.getElementById('balance').innerText = data.balance.toFixed(2);
-                
-                // Aktualizacja listy
-                const tradesList = document.getElementById('trades');
-                tradesList.innerHTML = '';
-                
-                if (data.trades.length === 0) {
-                    tradesList.innerHTML = '<li class="text-gray-500 italic">Brak transakcji</li>';
-                }
-                
-                data.trades.forEach(trade => {
-                    const li = document.createElement('li');
-                    li.className = "bg-gray-700 p-3 rounded flex justify-between items-center";
-                    li.innerHTML = `<span class="font-medium">${trade.event}</span><span class="font-bold text-green-400">${trade.action}</span>`;
-                    tradesList.appendChild(li);
+        function update() {
+            fetch('/api/stats')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('status').innerText = data.status;
+                    document.getElementById('balance').innerText = data.balance.toFixed(2);
                 });
-            } catch (e) {
-                console.error("Błąd aktualizacji:", e);
-            }
         }
-
-        setInterval(updateStats, 3000); // Odśwież co 3 sekundy
-        updateStats();
+        setInterval(update, 3000);
+        update();
     </script>
 </body>
 </html>
