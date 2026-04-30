@@ -9,42 +9,37 @@ from apscheduler.schedulers.background import BackgroundScheduler
 load_dotenv()
 app = Flask(__name__)
 
-# Konfiguracja
+# Stan globalny
 balance = 1000.0
 trades = []
-current_bot_status = "Inicjalizacja..."
+current_bot_status = "Oczekiwanie na start..."
+
+# Inicjalizacja Groq
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def get_polymarket_data():
     try:
-        # Pobieramy aktywne rynki z API Polymarket
         url = "https://gamma-api.polymarket.com/events?active=true"
         response = requests.get(url, timeout=10)
-        events = response.json()
+        data = response.json()
+        if not data: return "Brak aktywnych rynków"
         
-        # Wybieramy jedno losowe aktywne wydarzenie
-        event = random.choice(events)
-        title = event.get('title', 'Unknown Market')
-        # Polymarket przechowuje kursy w 'markets' -> 'prices' (uproszczenie)
-        return f"Rynek: {title}"
+        # Wybierz losowy rynek
+        event = random.choice(data)
+        return event.get('title', 'Nieznane wydarzenie')
     except Exception as e:
-        return f"Błąd pobierania danych: {str(e)}"
+        return f"Błąd sieci: {str(e)}"
 
 def perform_trade_logic():
     global balance, current_bot_status
     
-    current_bot_status = "Pobieram dane z Polymarket..."
-    market_data = get_polymarket_data()
+    current_bot_status = "Pobieranie danych..."
+    market = get_polymarket_data()
     
-    if "Błąd" in market_data:
-        current_bot_status = market_data
-        return
-
-    current_bot_status = f"Analizuję: {market_data[:30]}..."
+    current_bot_status = f"Analiza AI: {market[:20]}..."
     
     try:
-        # Analiza AI
-        prompt = f"Analizuj rynek Polymarket: {market_data}. Czy widzisz okazję inwestycyjną? Czy kupić (BUY) czy czekać (HOLD)? Odpowiedz tylko BUY lub HOLD."
+        prompt = f"Analizuj rynek: {market}. Czy to okazja na BUY czy HOLD? Odpowiedz krótko."
         response = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama3-8b-8192"
@@ -52,18 +47,18 @@ def perform_trade_logic():
         decision = response.choices[0].message.content
         
         if "BUY" in decision.upper() and balance > 10:
-            current_bot_status = "Wykonywanie transakcji..."
             balance -= 10.0
-            trades.append({"event": market_data, "action": "BUY", "status": "Live Data"})
+            trades.append({"event": market, "action": "BUY"})
+            current_bot_status = "Kupiono!"
         else:
-            current_bot_status = "Czekam na lepsze okazje..."
+            current_bot_status = "Czekam..."
             
     except Exception as e:
         current_bot_status = f"Błąd AI: {str(e)}"
 
-# Scheduler
-scheduler = BackgroundScheduler()
-scheduler.add_job(func=perform_trade_logic, trigger="interval", minutes=2) # rzadziej, żeby nie zbanowali API
+# Uruchomienie schedulera
+scheduler = BackgroundScheduler(daemon=True)
+scheduler.add_job(func=perform_trade_logic, trigger="interval", seconds=60)
 scheduler.start()
 
 @app.route('/')
@@ -74,9 +69,9 @@ def index():
 def stats():
     return jsonify({
         "balance": round(balance, 2), 
-        "trades": trades[-10:], 
+        "trades": trades[-5:], 
         "status": current_bot_status
     })
 
 if __name__ == '__main__':
-    app.run(port=5000)
+    app.run()
