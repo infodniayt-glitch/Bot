@@ -3,22 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Trading Bot</title>
+    <title>AI Trading Bot Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen p-4 md:p-8">
     <div class="max-w-2xl mx-auto">
-        <h1 class="text-3xl font-bold mb-6 text-center text-blue-400">🤖 AI Trading Bot</h1>
+        <h1 class="text-3xl font-bold mb-6 text-center text-blue-400">🤖 AI Paper Trading Bot</h1>
         
-        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
+        <div class="bg-gray-800 p-4 rounded-lg mb-4 border-l-4 border-blue-500 shadow-lg">
+            <p class="text-sm text-gray-400">Aktualny status:</p>
+            <p id="status-text" class="text-lg font-bold text-blue-300">Ładowanie...</p>
+        </div>
+
+        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6 text-center">
             <h2 class="text-xl font-semibold mb-2 text-gray-300">Stan Konta</h2>
             <p class="text-4xl font-mono text-green-400">$ <span id="balance">1000.00</span></p>
         </div>
 
         <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-            <h2 class="text-xl font-semibold mb-4 text-gray-300">Historia Transakcji</h2>
+            <h2 class="text-xl font-semibold mb-4 text-gray-300">Ostatnie transakcje</h2>
             <ul id="trades" class="space-y-2">
-                <li class="text-gray-500 italic">Oczekiwanie na dane...</li>
+                <li class="text-gray-500 italic">Brak danych...</li>
             </ul>
         </div>
     </div>
@@ -29,10 +34,12 @@
                 const res = await fetch('/api/stats');
                 const data = await res.json();
                 
+                // Aktualizacja statusu
+                document.getElementById('status-text').innerText = data.status;
                 // Aktualizacja salda
                 document.getElementById('balance').innerText = data.balance.toFixed(2);
                 
-                // Aktualizacja listy transakcji
+                // Aktualizacja listy
                 const tradesList = document.getElementById('trades');
                 tradesList.innerHTML = '';
                 
@@ -43,19 +50,15 @@
                 data.trades.forEach(trade => {
                     const li = document.createElement('li');
                     li.className = "bg-gray-700 p-3 rounded flex justify-between items-center";
-                    li.innerHTML = `
-                        <span class="font-medium">${trade.event}</span>
-                        <span class="font-bold text-green-400">${trade.action}</span>
-                    `;
+                    li.innerHTML = `<span class="font-medium">${trade.event}</span><span class="font-bold text-green-400">${trade.action}</span>`;
                     tradesList.appendChild(li);
                 });
             } catch (e) {
-                console.error("Błąd pobierania danych:", e);
+                console.error("Błąd aktualizacji:", e);
             }
         }
 
-        // Odświeżaj statystyki co 5 sekund
-        setInterval(updateStats, 5000);
+        setInterval(updateStats, 3000); // Odśwież co 3 sekundy
         updateStats();
     </script>
 </body>
