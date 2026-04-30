@@ -9,14 +9,21 @@
     <div class="max-w-md mx-auto">
         <h1 class="text-2xl font-bold mb-4 text-blue-400">🤖 AI Trading Bot</h1>
         
-        <div class="bg-gray-800 p-4 rounded mb-4">
-            <p class="text-gray-400 text-xs">STATUS:</p>
-            <p id="status" class="text-xl font-bold text-yellow-500">Ładowanie...</p>
+        <div class="bg-gray-800 p-4 rounded mb-4 border border-gray-700">
+            <p class="text-gray-400 text-xs">STATUS (ostatnia aktualizacja: <span id="time" class="text-white">--:--</span>):</p>
+            <p id="status" class="text-lg font-bold text-yellow-500">Uruchamianie...</p>
         </div>
 
-        <div class="bg-gray-800 p-4 rounded mb-4">
+        <div class="bg-gray-800 p-4 rounded mb-4 border border-gray-700">
             <p class="text-gray-400 text-xs">SALDO:</p>
             <p class="text-2xl">$ <span id="balance">1000.00</span></p>
+        </div>
+
+        <div class="bg-gray-800 p-4 rounded border border-gray-700">
+            <p class="text-gray-400 text-xs mb-2">HISTORIA TRANSAKCJI:</p>
+            <div id="logs" class="text-sm space-y-2 font-mono">
+                <p class="text-gray-500">Brak transakcji...</p>
+            </div>
         </div>
     </div>
 
@@ -26,7 +33,15 @@
                 .then(r => r.json())
                 .then(data => {
                     document.getElementById('status').innerText = data.status;
+                    document.getElementById('time').innerText = data.last_update;
                     document.getElementById('balance').innerText = data.balance.toFixed(2);
+                    
+                    const logs = document.getElementById('logs');
+                    if(data.trades.length > 0) {
+                        logs.innerHTML = data.trades.map(t => 
+                            `<p class="border-b border-gray-700 pb-1"><span class="text-gray-500">[${t.time}]</span> ${t.action}: ${t.event}</p>`
+                        ).join('');
+                    }
                 });
         }
         setInterval(update, 3000);
