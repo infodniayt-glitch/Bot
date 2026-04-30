@@ -1,7 +1,7 @@
 import os
 import requests
 import random
-from datetime import datetime  # <--- Dodaj to!
+from datetime import datetime
 from flask import Flask, render_template, jsonify
 from groq import Groq
 from dotenv import load_dotenv
@@ -13,7 +13,8 @@ app = Flask(__name__)
 # Stan globalny
 balance = 1000.0
 trades = []
-current_bot_status = "System uruchomiony, startuję..."
+current_bot_status = "Oczekiwanie..."
+last_update = "--:--"
 
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
@@ -22,14 +23,16 @@ def get_polymarket_data():
         url = "https://gamma-api.polymarket.com/events?active=true"
         response = requests.get(url, timeout=10)
         data = response.json()
-        if not data: return "Brak aktywnych rynków"
+        if not data: return "Brak rynków"
         event = random.choice(data)
-        return event.get('title', 'Nieznane wydarzenie')
+        return event.get('title', 'Nieznane')
     except Exception as e:
-        return f"Błąd: {str(e)}"
+        return f"Błąd sieci"
 
 def perform_trade_logic():
-    global balance, current_bot_status
+    global balance, current_bot_status, last_update
+    
+    last_update = datetime.now().strftime("%H:%M:%S")
     current_bot_status = "Analizowanie rynku..."
     market = get_polymarket_data()
     
@@ -43,16 +46,16 @@ def perform_trade_logic():
         
         if "BUY" in decision.upper() and balance > 10:
             balance -= 10.0
-            trades.append({"event": market, "action": "BUY"})
-            current_bot_status = f"Kupiono! ({market[:15]}...)"
+            # Dodajemy log z czasem
+            trades.append({"time": last_update, "event": market[:30], "action": "BUY"})
+            current_bot_status = "Kupiono!"
         else:
-            current_bot_status = "Czekam na okazję..."
+            current_bot_status = "Czekam..."
     except Exception as e:
-        current_bot_status = f"Błąd AI: {str(e)}"
+        current_bot_status = f"Błąd AI"
 
-# AUTO-START z natychmiastowym wywołaniem
+# Scheduler
 scheduler = BackgroundScheduler(daemon=True)
-# next_run_time=datetime.now() wymusza start TERAZ
 scheduler.add_job(func=perform_trade_logic, trigger="interval", seconds=60, next_run_time=datetime.now())
 scheduler.start()
 
@@ -64,8 +67,9 @@ def index():
 def stats():
     return jsonify({
         "balance": round(balance, 2), 
-        "trades": trades[-5:], 
-        "status": current_bot_status
+        "trades": trades[::-1], # Odwracamy listę (najnowsze na górze)
+        "status": current_bot_status,
+        "last_update": last_update
     })
 
 if __name__ == '__main__':
