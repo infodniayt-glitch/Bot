@@ -1,6 +1,6 @@
 flask
 groq
 python-dotenv
-gunicorn
 apscheduler
 requests
+gunicorn
