@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Trading Bot Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white p-8">
+    <h1 class="text-3xl font-bold mb-4">🤖 AI Paper Trading Bot</h1>
+    <div class="bg-gray-800 p-6 rounded shadow">
+        <p class="text-xl">Saldo: <span id="balance">1000</span> USD</p>
+        <button onclick="runTrade()" class="bg-blue-600 px-4 py-2 mt-4 rounded">Uruchom cykl handlu</button>
+    </div>
+    <ul id="trades" class="mt-4"></ul>
+
+    <script>
+        async function runTrade() {
+            const res = await fetch('/api/trade', {method: 'POST'});
+            const data = await res.json();
+            document.getElementById('balance').innerText = data.balance;
+            const li = document.createElement('li');
+            li.innerText = `${data.status}: ${data.decision}`;
+            document.getElementById('trades').prepend(li);
+        }
+    </script>
+</body>
+</html>
