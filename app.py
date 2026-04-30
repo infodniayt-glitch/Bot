@@ -6,8 +6,8 @@ from groq import Groq
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 
-load_dotenv()
 app = Flask(__name__)
+load_dotenv()
 
 # Stan globalny
 balance = 1000.0
@@ -17,47 +17,44 @@ current_bot_status = "Oczekiwanie na start..."
 # Inicjalizacja Groq
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-def get_polymarket_data():
+def perform_trade_logic():
+    global balance, current_bot_status
+    print("DEBUG: Rozpoczęto cykl bota!") # To zobaczysz w logach Render
+    
+    current_bot_status = "Pobieranie danych..."
     try:
         url = "https://gamma-api.polymarket.com/events?active=true"
         response = requests.get(url, timeout=10)
         data = response.json()
-        if not data: return "Brak aktywnych rynków"
         
-        # Wybierz losowy rynek
-        event = random.choice(data)
-        return event.get('title', 'Nieznane wydarzenie')
-    except Exception as e:
-        return f"Błąd sieci: {str(e)}"
-
-def perform_trade_logic():
-    global balance, current_bot_status
-    
-    current_bot_status = "Pobieranie danych..."
-    market = get_polymarket_data()
-    
-    current_bot_status = f"Analiza AI: {market[:20]}..."
-    
-    try:
-        prompt = f"Analizuj rynek: {market}. Czy to okazja na BUY czy HOLD? Odpowiedz krótko."
+        if not data: 
+            current_bot_status = "Brak rynków"
+            return
+            
+        market = random.choice(data).get('title', 'Unknown')
+        current_bot_status = f"Analiza: {market[:15]}..."
+        
+        # Analiza AI
+        prompt = f"Rynek: {market}. Kupić (BUY) czy czekać (HOLD)? Odpowiedz tylko słowem."
         response = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama3-8b-8192"
         )
-        decision = response.choices[0].message.content
+        decision = response.choices[0].message.content.strip().upper()
         
-        if "BUY" in decision.upper() and balance > 10:
+        if "BUY" in decision and balance >= 10:
             balance -= 10.0
             trades.append({"event": market, "action": "BUY"})
             current_bot_status = "Kupiono!"
         else:
-            current_bot_status = "Czekam..."
+            current_bot_status = "Hold (Czekam)..."
             
     except Exception as e:
-        current_bot_status = f"Błąd AI: {str(e)}"
+        print(f"DEBUG ERROR: {str(e)}") # To zobaczysz w logach Render
+        current_bot_status = f"Błąd: {str(e)[:15]}"
 
-# Uruchomienie schedulera
-scheduler = BackgroundScheduler(daemon=True)
+# Scheduler - startuje w tle
+scheduler = BackgroundScheduler()
 scheduler.add_job(func=perform_trade_logic, trigger="interval", seconds=60)
 scheduler.start()
 
