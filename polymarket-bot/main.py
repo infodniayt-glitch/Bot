@@ -9,43 +9,51 @@ from config import GROQ_API_KEY, INITIAL_BALANCE
 
 app = Flask(__name__)
 logs = []
-stats = {"total_trades": 0, "last_update": "Brak", "status": "Inicjalizacja..."}
+stats = {
+    "balance": INITIAL_BALANCE,
+    "total_trades": 0,
+    "last_update": "Brak",
+    "status": "Inicjalizacja..."
+}
 
-# Konfiguracja klienta Polymarket
+# Inicjalizacja klientów
 clob = ClobClient("https://clob.polymarket.com")
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 def add_log(message, type="info"):
     now = datetime.now().strftime("%H:%M:%S")
     logs.insert(0, {"time": now, "msg": message, "type": type})
-    if len(logs) > 50: logs.pop()
+    if len(logs) > 15: logs.pop()
 
-# --- Szablon Dashboardu ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Polymarket AI Dashboard</title>
+    <title>Polymarket AI Bot</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: white; padding: 20px; }
-        .log-container { background: #1e293b; padding: 15px; border-radius: 8px; }
-        .log-entry { margin-bottom: 5px; font-family: monospace; border-bottom: 1px solid #334155; padding: 4px 0; }
-        .info { color: #94a3b8; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: white; padding: 20px; }
+        .container { max-width: 800px; margin: auto; }
+        .card { background: #1e293b; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .log-entry { font-family: monospace; padding: 8px; border-bottom: 1px solid #334155; }
         .trade { color: #4ade80; }
         .error { color: #f87171; }
-        .header { display: flex; justify-content: space-between; align-items: center; }
+        h1 { color: #38bdf8; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>Polymarket AI Bot Live</h1>
-        <div>Status: <b>{{ stats.status }}</b></div>
-    </div>
-    <p>Ostatnia aktualizacja: {{ stats.last_update }} | Analizy: {{ stats.total_trades }}</p>
-    <div class="log-container">
-        {% for log in logs %}
-        <div class="log-entry {{ log.type }}">[{{ log.time }}] {{ log.msg }}</div>
-        {% endfor %}
+    <div class="container">
+        <h1>Polymarket AI Bot</h1>
+        <div class="card">
+            <p><strong>Saldo:</strong> {{ stats.balance }} | <strong>Analizy:</strong> {{ stats.total_trades }}</p>
+            <p><strong>Status:</strong> {{ stats.status }} | <strong>Aktualizacja:</strong> {{ stats.last_update }}</p>
+        </div>
+        <div class="card">
+            <h3>Dziennik Działań</h3>
+            {% for log in logs %}
+            <div class="log-entry {{ log.type }}">[{{ log.time }}] {{ log.msg }}</div>
+            {% endfor %}
+        </div>
     </div>
 </body>
 </html>
@@ -56,43 +64,43 @@ def dashboard():
     return render_template_string(HTML_TEMPLATE, logs=logs, stats=stats)
 
 def trading_loop():
-    client = Groq(api_key=GROQ_API_KEY)
-    add_log("System startuje. Pobieram dane rynkowe...", "info")
+    add_log("System startuje. Łączę z rynkiem...", "info")
     
     while True:
         try:
+            # 1. Pobranie rynków
             raw_data = clob.get_markets()
-            
-            # Pobieramy listę rynków z klucza 'data'
             markets = raw_data.get('data', []) if isinstance(raw_data, dict) else []
             
-            if not markets:
-                add_log("Brak rynków w danych API.", "error")
-            else:
-                add_log(f"Znaleziono {len(markets)} rynków. Analizuję...", "info")
+            if markets:
+                # Analizujemy pierwszy rynek
+                market = markets[0]
+                question = market.get('question', 'Nieznany rynek')
+                price = market.get('last_trade_price', '0.50')
                 
-                # Przetwarzamy pierwsze 3 rynki
-                for market in markets[:3]:
-                    question = market.get('question', 'Brak pytania')
-                    # W danych Polymarketu cena często jest w 'last_trade_price' 
-                    # lub wewnątrz obiektów 'clob_pair'
-                    price = market.get('last_trade_price', 'brak ceny')
-                    
-                    add_log(f"Analiza: {question[:30]}... (Cena: {price})", "info")
-                    
-                    # Tutaj możesz dodać wywołanie do Groq AI
-                    stats["total_trades"] += 1
-
+                add_log(f"Analizuję rynek: {question[:30]}...", "info")
+                
+                # 2. Zapytanie do Groq AI
+                prompt = f"Rynek: {question}. Cena: {price}. Czy to okazja? Odpowiedz bardzo krótko (KUP/CZEKAJ + powód)."
+                chat_completion = groq_client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model="llama-3.3-70b-versatile",
+                )
+                
+                decision = chat_completion.choices[0].message.content
+                stats["total_trades"] += 1
+                stats["status"] = "Online"
+                add_log(f"DECYZJA: {decision}", "trade")
+            
             stats["last_update"] = datetime.now().strftime("%H:%M:%S")
-            add_log("Cykl zakończony. Czekam 60s...", "info")
             
         except Exception as e:
+            stats["status"] = "BŁĄD"
             add_log(f"BŁĄD: {str(e)}", "error")
         
-        time.sleep(60)
+        time.sleep(60) # Czekaj minutę
+
 if __name__ == "__main__":
-    # Uruchomienie bota w tle
     threading.Thread(target=trading_loop, daemon=True).start()
-    # Uruchomienie serwera Flask
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
