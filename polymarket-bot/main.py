@@ -57,33 +57,39 @@ def dashboard():
 
 def trading_loop():
     client = Groq(api_key=GROQ_API_KEY)
-    add_log("System startuje. Testuję strukturę API...", "info")
+    add_log("System startuje. Pobieram dane rynkowe...", "info")
     
     while True:
         try:
             raw_data = clob.get_markets()
             
-            # Debugowanie struktury - tu sprawdzamy co dostajemy
-            if isinstance(raw_data, dict):
-                add_log(f"DEBUG: Otrzymano dict. Klucze: {list(raw_data.keys())}", "info")
-                stats["status"] = "API OK (Debug mode)"
-            elif isinstance(raw_data, list):
-                add_log("DEBUG: Otrzymano listę rynków.", "info")
-                stats["status"] = "API OK (Lista)"
+            # Pobieramy listę rynków z klucza 'data'
+            markets = raw_data.get('data', []) if isinstance(raw_data, dict) else []
+            
+            if not markets:
+                add_log("Brak rynków w danych API.", "error")
             else:
-                add_log(f"DEBUG: Otrzymano nieznany typ: {type(raw_data)}", "error")
+                add_log(f"Znaleziono {len(markets)} rynków. Analizuję...", "info")
+                
+                # Przetwarzamy pierwsze 3 rynki
+                for market in markets[:3]:
+                    question = market.get('question', 'Brak pytania')
+                    # W danych Polymarketu cena często jest w 'last_trade_price' 
+                    # lub wewnątrz obiektów 'clob_pair'
+                    price = market.get('last_trade_price', 'brak ceny')
+                    
+                    add_log(f"Analiza: {question[:30]}... (Cena: {price})", "info")
+                    
+                    # Tutaj możesz dodać wywołanie do Groq AI
+                    stats["total_trades"] += 1
 
-            # Symulacja pętli (tutaj będziemy przetwarzać rynki, gdy poznamy strukturę)
-            stats["total_trades"] += 1
             stats["last_update"] = datetime.now().strftime("%H:%M:%S")
-            add_log("Cykl analizy zakończony. Czekam...", "info")
+            add_log("Cykl zakończony. Czekam 60s...", "info")
             
         except Exception as e:
-            stats["status"] = "BŁĄD API"
             add_log(f"BŁĄD: {str(e)}", "error")
         
         time.sleep(60)
-
 if __name__ == "__main__":
     # Uruchomienie bota w tle
     threading.Thread(target=trading_loop, daemon=True).start()
