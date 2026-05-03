@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import random
 from datetime import datetime
 from flask import Flask, render_template_string
 from groq import Groq
@@ -13,6 +14,7 @@ balance_history = [INITIAL_BALANCE]
 current_balance = INITIAL_BALANCE
 stats = {"total_trades": 0, "status": "Inicjalizacja..."}
 
+# Inicjalizacja klientów
 clob = ClobClient("https://clob.polymarket.com")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -26,7 +28,7 @@ HTML_TEMPLATE = """
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Polymarket AI Pro</title>
+    <title>Polymarket AI Bot</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: sans-serif; background: #0f172a; color: white; padding: 20px; }
@@ -52,7 +54,7 @@ HTML_TEMPLATE = """
             type: 'line',
             data: {
                 labels: {{ range(balance_history|length)|list }},
-                datasets: [{ label: 'Saldo', data: {{ balance_history }}, borderColor: '#38bdf8', fill: true }]
+                datasets: [{ label: 'Saldo (USD)', data: {{ balance_history }}, borderColor: '#38bdf8', fill: true }]
             }
         });
     </script>
@@ -66,46 +68,50 @@ def dashboard():
 
 def trading_loop():
     global current_balance
-    add_log("System AI aktywny. Zarządzanie budżetem włączone.", "info")
+    add_log("System AI aktywny. Budżet zabezpieczony.", "info")
     
     while True:
         try:
             raw_data = clob.get_markets()
             markets = raw_data.get('data', []) if isinstance(raw_data, dict) else []
             
-            # Analiza tylko 3 rynków na cykl, aby nie przeciążyć AI
-            for market in markets[:3]:
-                question = market.get('question', 'Rynek')
-                price = market.get('last_trade_price', '0.50')
+            if markets:
+                # LOSOWANIE RYNKÓW: żeby nie analizować ciągle tego samego
+                random.shuffle(markets) 
                 
-                # Ulepszony prompt dla AI
-                prompt = f"""
-                Jesteś profesjonalnym traderem. Masz budżet {current_balance} USD.
-                Rynek: {question}. Cena: {price}. 
-                Czy to okazja inwestycyjna? 
-                Jeśli tak, napisz 'KUP' i powód. Jeśli nie, napisz 'CZEKAJ'.
-                """
-                
-                res = groq_client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}], 
-                    model="llama-3.3-70b-versatile"
-                )
-                decision = res.choices[0].message.content
-                
-                # Logika "Bezpiecznik Budżetowy"
-                if "KUP" in decision.upper():
-                    if current_balance >= 10:
-                        current_balance -= 10
-                        balance_history.append(current_balance)
-                        add_log(f"KUPIONO: {question[:15]}...", "trade")
+                # Analizujemy 3 losowe rynki
+                for market in markets[:3]:
+                    question = market.get('question', 'Rynek')
+                    price = market.get('last_trade_price', '0.50')
+                    
+                    # Prompt z uwzględnieniem budżetu
+                    prompt = f"""
+                    Jesteś profesjonalnym traderem. Masz budżet {current_balance} USD.
+                    Rynek: {question}. Cena: {price}. 
+                    Czy to okazja inwestycyjna? 
+                    Jeśli tak, napisz 'KUP' i powód. Jeśli nie, napisz 'CZEKAJ'.
+                    """
+                    
+                    res = groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}], 
+                        model="llama-3.3-70b-versatile"
+                    )
+                    decision = res.choices[0].message.content
+                    
+                    # Logika budżetowa (BEZPIECZNIK)
+                    if "KUP" in decision.upper():
+                        if current_balance >= 10:
+                            current_balance -= 10
+                            balance_history.append(current_balance)
+                            add_log(f"KUPIONO: {question[:15]}...", "trade")
+                        else:
+                            add_log(f"BRAK ŚRODKÓW: {question[:15]}", "error")
                     else:
-                        add_log(f"ODMOWA (brak środków): {question[:15]}", "error")
-                else:
-                    add_log(f"CZEKAM: {question[:15]}...", "info")
-                
-                stats["total_trades"] += 1
+                        add_log(f"CZEKAM: {question[:15]}...", "info")
+                    
+                    stats["total_trades"] += 1
             
-            add_log("Cykl analizy zakończony. Czekam 60s...", "info")
+            add_log("Cykl zakończony. Czekam 60s...", "info")
             time.sleep(60)
             
         except Exception as e:
@@ -114,4 +120,5 @@ def trading_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=trading_loop, daemon=True).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
