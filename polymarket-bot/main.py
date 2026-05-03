@@ -12,6 +12,7 @@ logs = []
 stats = {"total_trades": 0, "last_update": "Brak"}
 
 # --- Konfiguracja API ---
+# Używamy publicznego hosta
 clob = ClobClient("https://clob.polymarket.com")
 
 def add_log(message, type="info"):
@@ -29,14 +30,16 @@ HTML_TEMPLATE = """
     <style>
         body { font-family: sans-serif; background: #0f172a; color: white; padding: 20px; }
         .log-entry { margin-bottom: 5px; font-family: monospace; border-bottom: 1px solid #334155; }
+        .trade { color: #4ade80; }
+        .error { color: #f87171; }
     </style>
 </head>
 <body>
     <h1>Polymarket AI Bot Live</h1>
-    <p>Ostatnia aktualizacja: {{ stats.last_update }} | Transakcje: {{ stats.total_trades }}</p>
+    <p>Ostatnia aktualizacja: {{ stats.last_update }} | Analizy: {{ stats.total_trades }}</p>
     <div class="log-container">
         {% for log in logs %}
-        <div class="log-entry">[{{ log.time }}] {{ log.msg }}</div>
+        <div class="log-entry {{ log.type }}">{{ log.msg }}</div>
         {% endfor %}
     </div>
 </body>
@@ -49,14 +52,28 @@ def dashboard():
 
 def trading_loop():
     client = Groq(api_key=GROQ_API_KEY)
-    add_log("System uruchomiony. Łączę z Polymarket API...")
+    add_log("System startuje...")
     
     while True:
         try:
-            markets = clob.get_markets()[:5]
+            # Pobranie rynków
+            # Niektóre wersje biblioteki zwracają słownik zamiast listy
+            raw_data = clob.get_markets()
+            
+            # Bezpieczne sprawdzanie danych
+            if isinstance(raw_data, list):
+                markets = raw_data[:5]
+            else:
+                markets = []
+                add_log(f"Debug: API zwróciło typ {type(raw_data)} zamiast listy.", "error")
+
+            if not markets:
+                add_log("Brak danych z API Polymarket.", "error")
+            
             for market in markets:
-                market_name = market.get('question')
-                price = market.get('last_trade_price')
+                market_name = market.get('question', 'Brak nazwy')
+                price = market.get('last_trade_price', 0)
+                
                 prompt = f"Rynek: {market_name}. Cena YES: {price}. Czy trend jest wzrostowy? Odpowiedz: KUP/CZEKAJ i podaj krótkie uzasadnienie."
                 
                 completion = client.chat.completions.create(
@@ -69,16 +86,14 @@ def trading_loop():
                 stats["last_update"] = datetime.now().strftime("%H:%M:%S")
                 
                 if "KUP" in decision.upper():
-                    add_log(f"SYMULACJA: Decyzja KUP dla '{market_name[:30]}...'", "trade")
-                else:
-                    add_log(f"Analiza: {market_name[:20]}... (CZEKAJ)", "info")
-            
-            add_log("Cykl zakończony. Czekam 30s...")
+                    add_log(f"DECYZJA KUP: {market_name[:20]}...", "trade")
+                
+            add_log("Cykl zakończony.")
             
         except Exception as e:
-            add_log(f"BŁĄD API: {str(e)}", "error")
+            add_log(f"BŁĄD: {str(e)}", "error")
         
-        time.sleep(30)
+        time.sleep(60) # Czekamy minutę między cyklami
 
 if __name__ == "__main__":
     threading.Thread(target=trading_loop, daemon=True).start()
