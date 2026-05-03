@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import json
 from datetime import datetime
 from flask import Flask, render_template_string
 from groq import Groq
@@ -9,98 +10,93 @@ from config import GROQ_API_KEY, INITIAL_BALANCE
 
 app = Flask(__name__)
 logs = []
-stats = {
-    "balance": INITIAL_BALANCE,
-    "total_trades": 0,
-    "last_update": "Brak",
-    "status": "Inicjalizacja..."
-}
+balance_history = [INITIAL_BALANCE] # Historia salda do wykresu
+current_balance = INITIAL_BALANCE
+stats = {"total_trades": 0, "status": "Inicjalizacja..."}
 
-# Inicjalizacja klientów
 clob = ClobClient("https://clob.polymarket.com")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 def add_log(message, type="info"):
     now = datetime.now().strftime("%H:%M:%S")
     logs.insert(0, {"time": now, "msg": message, "type": type})
-    if len(logs) > 15: logs.pop()
+    if len(logs) > 20: logs.pop()
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Polymarket AI Bot</title>
+    <title>Polymarket AI Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: white; padding: 20px; }
-        .container { max-width: 800px; margin: auto; }
-        .card { background: #1e293b; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-        .log-entry { font-family: monospace; padding: 8px; border-bottom: 1px solid #334155; }
-        .trade { color: #4ade80; }
-        .error { color: #f87171; }
-        h1 { color: #38bdf8; }
+        body { font-family: sans-serif; background: #0f172a; color: white; padding: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card { background: #1e293b; padding: 20px; border-radius: 10px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Polymarket AI Bot</h1>
+    <h1>Polymarket AI Dashboard</h1>
+    <div class="grid">
         <div class="card">
-            <p><strong>Saldo:</strong> {{ stats.balance }} | <strong>Analizy:</strong> {{ stats.total_trades }}</p>
-            <p><strong>Status:</strong> {{ stats.status }} | <strong>Aktualizacja:</strong> {{ stats.last_update }}</p>
+            <h3>Wykres Salda</h3>
+            <canvas id="balanceChart"></canvas>
         </div>
         <div class="card">
-            <h3>Dziennik Działań</h3>
-            {% for log in logs %}
-            <div class="log-entry {{ log.type }}">[{{ log.time }}] {{ log.msg }}</div>
-            {% endfor %}
+            <h3>Logi (Ostatnie 20)</h3>
+            {% for log in logs %}<div style="font-size: 12px; margin-bottom: 5px;">{{ log.msg }}</div>{% endfor %}
         </div>
     </div>
+    <script>
+        const ctx = document.getElementById('balanceChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: {{ range(balance_history|length)|list }},
+                datasets: [{ label: 'Saldo (USD)', data: {{ balance_history }}, borderColor: '#4ade80', tension: 0.1 }]
+            }
+        });
+    </script>
 </body>
 </html>
 """
 
 @app.route('/')
 def dashboard():
-    return render_template_string(HTML_TEMPLATE, logs=logs, stats=stats)
+    return render_template_string(HTML_TEMPLATE, logs=logs, balance_history=balance_history)
 
 def trading_loop():
-    add_log("System startuje. Łączę z rynkiem...", "info")
-    
+    global current_balance
     while True:
         try:
-            # 1. Pobranie rynków
             raw_data = clob.get_markets()
             markets = raw_data.get('data', []) if isinstance(raw_data, dict) else []
             
-            if markets:
-                # Analizujemy pierwszy rynek
-                market = markets[0]
-                question = market.get('question', 'Nieznany rynek')
+            # Analizujemy Top 10 rynków (bezpieczny kompromis)
+            for market in markets[:10]:
+                question = market.get('question', 'Rynek')
                 price = market.get('last_trade_price', '0.50')
                 
-                add_log(f"Analizuję rynek: {question[:30]}...", "info")
+                # Symulacja decyzji AI
+                prompt = f"Rynek: {question}. Cena: {price}. Czy kupić? Odpowiedz tylko: KUP, SPRZEDAJ lub CZEKAJ."
+                res = groq_client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile")
+                decision = res.choices[0].message.content
                 
-                # 2. Zapytanie do Groq AI
-                prompt = f"Rynek: {question}. Cena: {price}. Czy to okazja? Odpowiedz bardzo krótko (KUP/CZEKAJ + powód)."
-                chat_completion = groq_client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
-                    model="llama-3.3-70b-versatile",
-                )
+                # Prosta logika symulacji portfela
+                if "KUP" in decision:
+                    current_balance -= 10 # Symulacja kosztu
+                    balance_history.append(current_balance)
+                    add_log(f"KUP: {question[:20]}", "trade")
                 
-                decision = chat_completion.choices[0].message.content
                 stats["total_trades"] += 1
-                stats["status"] = "Online"
-                add_log(f"DECYZJA: {decision}", "trade")
             
-            stats["last_update"] = datetime.now().strftime("%H:%M:%S")
+            add_log("Cykl zakończony. Czekam 60s...", "info")
+            time.sleep(60)
             
         except Exception as e:
-            stats["status"] = "BŁĄD"
-            add_log(f"BŁĄD: {str(e)}", "error")
-        
-        time.sleep(60) # Czekaj minutę
+            add_log(f"Błąd: {e}", "error")
+            time.sleep(60)
 
 if __name__ == "__main__":
     threading.Thread(target=trading_loop, daemon=True).start()
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
