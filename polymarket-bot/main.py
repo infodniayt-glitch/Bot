@@ -9,10 +9,9 @@ from config import GROQ_API_KEY, INITIAL_BALANCE
 
 app = Flask(__name__)
 logs = []
-stats = {"total_trades": 0, "last_update": "Brak"}
+stats = {"total_trades": 0, "last_update": "Brak", "status": "Inicjalizacja..."}
 
-# --- Konfiguracja API ---
-# Używamy publicznego hosta
+# Konfiguracja klienta Polymarket
 clob = ClobClient("https://clob.polymarket.com")
 
 def add_log(message, type="info"):
@@ -28,18 +27,24 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <title>Polymarket AI Dashboard</title>
     <style>
-        body { font-family: sans-serif; background: #0f172a; color: white; padding: 20px; }
-        .log-entry { margin-bottom: 5px; font-family: monospace; border-bottom: 1px solid #334155; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: white; padding: 20px; }
+        .log-container { background: #1e293b; padding: 15px; border-radius: 8px; }
+        .log-entry { margin-bottom: 5px; font-family: monospace; border-bottom: 1px solid #334155; padding: 4px 0; }
+        .info { color: #94a3b8; }
         .trade { color: #4ade80; }
         .error { color: #f87171; }
+        .header { display: flex; justify-content: space-between; align-items: center; }
     </style>
 </head>
 <body>
-    <h1>Polymarket AI Bot Live</h1>
+    <div class="header">
+        <h1>Polymarket AI Bot Live</h1>
+        <div>Status: <b>{{ stats.status }}</b></div>
+    </div>
     <p>Ostatnia aktualizacja: {{ stats.last_update }} | Analizy: {{ stats.total_trades }}</p>
     <div class="log-container">
         {% for log in logs %}
-        <div class="log-entry {{ log.type }}">{{ log.msg }}</div>
+        <div class="log-entry {{ log.type }}">[{{ log.time }}] {{ log.msg }}</div>
         {% endfor %}
     </div>
 </body>
@@ -52,50 +57,36 @@ def dashboard():
 
 def trading_loop():
     client = Groq(api_key=GROQ_API_KEY)
-    add_log("System startuje...")
+    add_log("System startuje. Testuję strukturę API...", "info")
     
     while True:
         try:
-            # Pobranie rynków
-            # Niektóre wersje biblioteki zwracają słownik zamiast listy
             raw_data = clob.get_markets()
             
-            # Bezpieczne sprawdzanie danych
-            if isinstance(raw_data, list):
-                markets = raw_data[:5]
+            # Debugowanie struktury - tu sprawdzamy co dostajemy
+            if isinstance(raw_data, dict):
+                add_log(f"DEBUG: Otrzymano dict. Klucze: {list(raw_data.keys())}", "info")
+                stats["status"] = "API OK (Debug mode)"
+            elif isinstance(raw_data, list):
+                add_log("DEBUG: Otrzymano listę rynków.", "info")
+                stats["status"] = "API OK (Lista)"
             else:
-                markets = []
-                add_log(f"Debug: API zwróciło typ {type(raw_data)} zamiast listy.", "error")
+                add_log(f"DEBUG: Otrzymano nieznany typ: {type(raw_data)}", "error")
 
-            if not markets:
-                add_log("Brak danych z API Polymarket.", "error")
-            
-            for market in markets:
-                market_name = market.get('question', 'Brak nazwy')
-                price = market.get('last_trade_price', 0)
-                
-                prompt = f"Rynek: {market_name}. Cena YES: {price}. Czy trend jest wzrostowy? Odpowiedz: KUP/CZEKAJ i podaj krótkie uzasadnienie."
-                
-                completion = client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
-                    model="llama-3.3-70b-versatile",
-                )
-                
-                decision = completion.choices[0].message.content
-                stats["total_trades"] += 1
-                stats["last_update"] = datetime.now().strftime("%H:%M:%S")
-                
-                if "KUP" in decision.upper():
-                    add_log(f"DECYZJA KUP: {market_name[:20]}...", "trade")
-                
-            add_log("Cykl zakończony.")
+            # Symulacja pętli (tutaj będziemy przetwarzać rynki, gdy poznamy strukturę)
+            stats["total_trades"] += 1
+            stats["last_update"] = datetime.now().strftime("%H:%M:%S")
+            add_log("Cykl analizy zakończony. Czekam...", "info")
             
         except Exception as e:
+            stats["status"] = "BŁĄD API"
             add_log(f"BŁĄD: {str(e)}", "error")
         
-        time.sleep(60) # Czekamy minutę między cyklami
+        time.sleep(60)
 
 if __name__ == "__main__":
+    # Uruchomienie bota w tle
     threading.Thread(target=trading_loop, daemon=True).start()
+    # Uruchomienie serwera Flask
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
