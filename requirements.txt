@@ -1,6 +1,3 @@
-flask
 groq
-python-dotenv
-apscheduler
 requests
-gunicorn
+python-dotenv
