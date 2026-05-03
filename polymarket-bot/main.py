@@ -1,7 +1,6 @@
 import os
 import time
 import threading
-import json
 from datetime import datetime
 from flask import Flask, render_template_string
 from groq import Groq
@@ -10,7 +9,7 @@ from config import GROQ_API_KEY, INITIAL_BALANCE
 
 app = Flask(__name__)
 logs = []
-balance_history = [INITIAL_BALANCE] # Historia salda do wykresu
+balance_history = [INITIAL_BALANCE]
 current_balance = INITIAL_BALANCE
 stats = {"total_trades": 0, "status": "Inicjalizacja..."}
 
@@ -39,12 +38,12 @@ HTML_TEMPLATE = """
     <h1>Polymarket AI Dashboard</h1>
     <div class="grid">
         <div class="card">
-            <h3>Wykres Salda</h3>
+            <h3>Saldo: {{ current_balance }} USD</h3>
             <canvas id="balanceChart"></canvas>
         </div>
         <div class="card">
-            <h3>Logi (Ostatnie 20)</h3>
-            {% for log in logs %}<div style="font-size: 12px; margin-bottom: 5px;">{{ log.msg }}</div>{% endfor %}
+            <h3>Dziennik Działań</h3>
+            {% for log in logs %}<div style="font-size: 12px; margin-bottom: 5px; color: {{ '#4ade80' if log.type == 'trade' else 'white' }}">{{ log.msg }}</div>{% endfor %}
         </div>
     </div>
     <script>
@@ -53,7 +52,7 @@ HTML_TEMPLATE = """
             type: 'line',
             data: {
                 labels: {{ range(balance_history|length)|list }},
-                datasets: [{ label: 'Saldo (USD)', data: {{ balance_history }}, borderColor: '#4ade80', tension: 0.1 }]
+                datasets: [{ label: 'Saldo', data: {{ balance_history }}, borderColor: '#38bdf8', fill: true }]
             }
         });
     </script>
@@ -63,38 +62,54 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def dashboard():
-    return render_template_string(HTML_TEMPLATE, logs=logs, balance_history=balance_history)
+    return render_template_string(HTML_TEMPLATE, logs=logs, balance_history=balance_history, current_balance=current_balance)
 
 def trading_loop():
     global current_balance
+    add_log("System AI aktywny. Zarządzanie budżetem włączone.", "info")
+    
     while True:
         try:
             raw_data = clob.get_markets()
             markets = raw_data.get('data', []) if isinstance(raw_data, dict) else []
             
-            # Analizujemy Top 10 rynków (bezpieczny kompromis)
-            for market in markets[:10]:
+            # Analiza tylko 3 rynków na cykl, aby nie przeciążyć AI
+            for market in markets[:3]:
                 question = market.get('question', 'Rynek')
                 price = market.get('last_trade_price', '0.50')
                 
-                # Symulacja decyzji AI
-                prompt = f"Rynek: {question}. Cena: {price}. Czy kupić? Odpowiedz tylko: KUP, SPRZEDAJ lub CZEKAJ."
-                res = groq_client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile")
+                # Ulepszony prompt dla AI
+                prompt = f"""
+                Jesteś profesjonalnym traderem. Masz budżet {current_balance} USD.
+                Rynek: {question}. Cena: {price}. 
+                Czy to okazja inwestycyjna? 
+                Jeśli tak, napisz 'KUP' i powód. Jeśli nie, napisz 'CZEKAJ'.
+                """
+                
+                res = groq_client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}], 
+                    model="llama-3.3-70b-versatile"
+                )
                 decision = res.choices[0].message.content
                 
-                # Prosta logika symulacji portfela
-                if "KUP" in decision:
-                    current_balance -= 10 # Symulacja kosztu
-                    balance_history.append(current_balance)
-                    add_log(f"KUP: {question[:20]}", "trade")
+                # Logika "Bezpiecznik Budżetowy"
+                if "KUP" in decision.upper():
+                    if current_balance >= 10:
+                        current_balance -= 10
+                        balance_history.append(current_balance)
+                        add_log(f"KUPIONO: {question[:15]}...", "trade")
+                    else:
+                        add_log(f"ODMOWA (brak środków): {question[:15]}", "error")
+                else:
+                    add_log(f"CZEKAM: {question[:15]}...", "info")
                 
                 stats["total_trades"] += 1
             
-            add_log("Cykl zakończony. Czekam 60s...", "info")
+            add_log("Cykl analizy zakończony. Czekam 60s...", "info")
             time.sleep(60)
             
         except Exception as e:
-            add_log(f"Błąd: {e}", "error")
+            add_log(f"BŁĄD: {str(e)}", "error")
             time.sleep(60)
 
 if __name__ == "__main__":
