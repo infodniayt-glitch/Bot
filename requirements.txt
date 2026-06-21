@@ -1,7 +1,3 @@
-flask
+py-clob-client
+web3
 requests
-ccxt
-groq
-apscheduler
-pandas
-pytz
