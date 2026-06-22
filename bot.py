@@ -3,10 +3,26 @@ import requests
 import json
 import threading
 import os
-import math  
+import math 
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from web3 import Web3
+from eth_account import Account
+
+# =====================================================================
+#  KLUCZE API I PORTFELA
+# =====================================================================
+os.environ["POLY_API_KEY"] = "6d7e9b08-c4af-685f-e408-489b2fe6160a"
+os.environ["POLY_SECRET"] = "mYcrk_X1JzEMo39loyhQidDxkv10tIGm0thxl7KYDL8="
+os.environ["POLY_PASSPHRASE"] = "4149df3ddd77f7321c3db13a4ce2c0557c7375fa5c5dd4a23dd01e78d0b77a90"
+os.environ["WALLET_PRIVATE_KEY"] = "f3a2c765b3b530d0d95d84e5eb495fa8ea2a5027499535719ed82de5e45db46e" 
+
+# --- Automatyczne wyciąganie adresu publicznego z klucza prywatnego ---
+try:
+    account = Account.from_key(os.environ["WALLET_PRIVATE_KEY"])
+    os.environ["WALLET_ADDRESS"] = account.address
+except Exception as e:
+    print(f"Błąd generowania adresu z klucza: {e}")
 
 # =====================================================================
 # --- BEZPIECZNA WERYFIKACJA INTEGRACJI SDK POLYMARKET ---
@@ -20,8 +36,10 @@ try:
 except ImportError:
     HAS_SDK = False
 
-# Sprawdzanie czy bot działa na żywo (Render), czy lokalnie/testowo
-IS_LIVE = os.environ.get("WALLET_PRIVATE_KEY") is not None
+# =====================================================================
+# !!! WYMUSZAMY TRYB LIVE (PRAWDZIWE PIENIĄDZE) !!!
+# =====================================================================
+IS_LIVE = True
 
 # =====================================================================
 #  USTAWIENIA BOTA (Zarządzanie Ryzykiem i Pozycją)
@@ -70,7 +88,7 @@ RPC_URLS.extend([
 
 def add_log(message):
     """Dodaje wpis do konsoli bota oraz do pamięci stanów UI"""
-    timestamp = datetime.utcnow().strftime("%H:%M:%S")
+    timestamp = datetime.now().strftime("%H:%M:%S")
     log_entry = f"[{timestamp}] {message}"
     print(log_entry)  
     with state_lock:
@@ -79,7 +97,7 @@ def add_log(message):
             bot_state["logs"].pop(0)
 
 def init_clob_client():
-    """Inicjalizuje klienta Polymarket CLOB. Jeśli brakuje kluczy API, tworzy je automatycznie przez SDK."""
+    """Inicjalizuje klienta Polymarket CLOB."""
     global poly_client
     if not IS_LIVE:
         return
@@ -96,16 +114,12 @@ def init_clob_client():
     if HAS_SDK:
         try:
             if api_key and poly_secret and poly_pass:
-                # Jeśli użytkownik podał klucze ręcznie
                 creds = ApiCreds(api_key=api_key, api_secret=poly_secret, api_passphrase=poly_pass)
-                poly_client = ClobClient(key_or_signer=private_key, chain_id=POLYGON, creds=creds)
+                poly_client = ClobClient(key=private_key, chain_id=POLYGON, creds=creds)
                 add_log("✅ Autoryzacja SDK powiodła się na podstawie wczytanych kluczy z Render.")
             else:
-                # AUTOMATYCZNE GENEROWANIE KLUCZY PRZEZ PODPIS L2
                 add_log("ℹ️ Wykryto portfel, ale brakuje danych API. Uruchamiam AUTOMATYCZNE generowanie kluczy na giełdzie...")
-                poly_client = ClobClient(key_or_signer=private_key, chain_id=POLYGON)
-                
-                # SDK wysyła podpisany kryptograficznie wniosek o rejestrację kluczy API
+                poly_client = ClobClient(key=private_key, chain_id=POLYGON)
                 new_creds = poly_client.create_api_keys()
                 
                 if isinstance(new_creds, dict):
@@ -118,22 +132,13 @@ def init_clob_client():
                     p = getattr(new_creds, "passphrase", None)
 
                 if k and s and p:
-                    # Zapisujemy w pamięci podręcznej procesu, żeby fallback REST też je widział
                     os.environ["POLY_API_KEY"] = str(k)
                     os.environ["POLY_SECRET"] = str(s)
                     os.environ["POLY_PASSPHRASE"] = str(p)
-                    
-                    add_log("🔮 SPEKTAKULARNY SUKCES! Bot sam zarejestrował klucze API w Polymarket!")
-                    add_log("📌 Przepisz je do zmiennych w Render, aby nie generować nowych przy każdym restarcie bota:")
-                    add_log(f"👉 POLY_API_KEY = {k}")
-                    add_log(f"👉 POLY_SECRET = {s}")
-                    add_log(f"👉 POLY_PASSPHRASE = {p}")
-                    
-                    # Reinicjalizacja z nowymi poświadczeniami dla pełnej stabilności
                     creds = ApiCreds(api_key=str(k), api_secret=str(s), api_passphrase=str(p))
-                    poly_client = ClobClient(key_or_signer=private_key, chain_id=POLYGON, creds=creds)
+                    poly_client = ClobClient(key=private_key, chain_id=POLYGON, creds=creds)
                 else:
-                    add_log("⚠️ Serwer Polymarket zwrócił nietypową strukturę kluczy. Sprawdź logi.")
+                    add_log("⚠️ Serwer Polymarket zwrócił nietypową strukturę kluczy.")
         except Exception as e:
             add_log(f"🚨 Awaria podczas próby autogenerowania profilu API: {e}")
             poly_client = None
@@ -141,7 +146,7 @@ def init_clob_client():
         if api_key and poly_secret and poly_pass:
             add_log("⚠️ Brak py-clob-client SDK w systemie. Bot przełącza się w natywny tryb żądań HTTPS REST.")
         else:
-            add_log("❌ Błąd: Brak biblioteki py-clob-client i brak wpisanych kluczy. Bot nie może automatycznie wygenerować zabezpieczeń.")
+            add_log("❌ Błąd: Brak biblioteki py-clob-client i brak wpisanych kluczy.")
 
 def update_real_balance():
     """Pobiera zabezpieczone saldo USDC i pUSD z portfela Polygon"""
@@ -149,6 +154,7 @@ def update_real_balance():
         return
     wallet_address = os.environ.get("WALLET_ADDRESS")
     if not wallet_address:
+        add_log("⚠️ Brak adresu portfela, nie mogę sprawdzić salda!")
         return
         
     usdc_contracts = [
@@ -180,14 +186,13 @@ def update_real_balance():
         except: continue
 
 def get_polymarket_15m_market():
-    """Wyszukuje aktywny rynek BTC za pomocą inteligentnego wyszukiwania szerokiego oraz filtrów awaryjnych"""
+    """Wyszukuje aktywny rynek BTC na giełdzie"""
     try:
         url = "https://gamma-api.polymarket.com/markets?closed=false&active=true&search=Bitcoin&limit=20"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=5)
         
         if response.status_code != 200:
-            add_log(f"⚠️ Serwer Polymarket zwrócił kod błędu HTTP {response.status_code} zamiast danych rynkowych.")
             return None
             
         markets_list = response.json()
@@ -216,11 +221,11 @@ def get_polymarket_15m_market():
                         "market_id": market.get("conditionId", "Unknown")
                     }
     except Exception as e:
-        add_log(f"⚠️ Wyjątek krytyczny podczas odpytywania API rynków: {e}")
+        pass
     return None
 
 def get_btc_price():
-    """Stabilny przelicznik ceny spot BTC"""
+    """Pobiera cenę z Binance API"""
     try:
         res = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=3)
         return float(res.json()['price'])
@@ -231,9 +236,9 @@ def get_btc_price():
         except: return None
 
 def execute_polymarket_order(token_id, amount_usdc, side="BUY"):
-    """Składa bezpieczne zlecenie używając autoryzacji L2 lub interfejsu SDK"""
+    """Składa Prawdziwe Zlecenie na Giełdzie Polymarket"""
     if not IS_LIVE:
-        add_log(f"🤖 [SYMULACJA] Zlecenie {side} | Token: {token_id[:6]}... | Kwota: {amount_usdc} USDC")
+        add_log(f"🤖 [SYMULACJA] Zlecenie {side} | Kwota: {amount_usdc} USDC")
         return True
     
     global poly_client
@@ -241,7 +246,7 @@ def execute_polymarket_order(token_id, amount_usdc, side="BUY"):
         try:
             res_sdk = poly_client.create_order(OrderArgs(price=0.50, size=round(amount_usdc/0.50, 1), side=side, token_id=token_id))
             if res_sdk:
-                add_log(f"✅ Zlecenie SDK {side} wykonane pomyślnie!")
+                add_log(f"✅ Zlecenie SDK {side} wykonane pomyślnie na giełdzie!")
                 return True
         except Exception as e:
             add_log(f"ℹ️ Próba SDK odrzucona ({e}). Przełączanie awaryjne na podpis REST...")
@@ -254,7 +259,7 @@ def execute_polymarket_order(token_id, amount_usdc, side="BUY"):
     wallet_address = os.environ.get("WALLET_ADDRESS", "")
     
     if not api_key or not poly_secret or not poly_pass:
-         add_log("❌ Błąd autoryzacji: Brak kluczy API. Autogenerowanie nie powiodło się lub nie wprowadzono zmiennych.")
+         add_log("❌ Błąd autoryzacji: Brak kluczy API!")
          return False
          
     timestamp = str(int(time.time()))
@@ -277,7 +282,7 @@ def execute_polymarket_order(token_id, amount_usdc, side="BUY"):
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=5)
         if res.status_code in [200, 201]:
-            add_log(f"✅ Bezpośrednie zlecenie REST {side} udane!")
+            add_log(f"✅ Zlecenie LIVE {side} na giełdzie udane!")
             return True
         else:
             add_log(f"❌ Odmowa giełdy Polymarket: HTTP {res.status_code} | {res.text}")
@@ -287,9 +292,8 @@ def execute_polymarket_order(token_id, amount_usdc, side="BUY"):
         return False
 
 def update_candle_logic(current_price):
-    """Zarządza cyklem życia świecy 15-minutowej oraz historii transakcji flips"""
     global price_history
-    now = datetime.utcnow()
+    now = datetime.now()
     minutes_passed = now.minute % 15
     seconds_passed = now.second
     total_seconds_left = (15 * 60) - (minutes_passed * 60 + seconds_passed)
@@ -325,15 +329,15 @@ def update_candle_logic(current_price):
                     "profit": profit
                 }
                 bot_state["trade_history"].append(history_entry)
-                if not IS_LIVE and win:
-                    bot_state["virtual_balance"] += (trade["cost"] * 1.85)
                 
                 add_log(f"🏁 Koniec świecy rozliczony. Wynik: {'SUKCES 💰' if win else 'PORAŻKA 📉'}")
                 bot_state["active_trade"] = None
                 update_real_balance()
 
 def run_trading_strategy():
-    add_log(f"🚀 Uruchomiono PEŁNY system tradingowy. Tryb: {'PRODUKCJA LIVE' if IS_LIVE else 'SYMULACJA'}")
+    add_log("🚀 Uruchomiono PEŁNY system tradingowy. Tryb: PRODUKCJA LIVE (PRAWDZIWE PIENIĄDZE)")
+    add_log(f"🔑 Zabezpieczony adres portfela (LIVE): {os.environ.get('WALLET_ADDRESS', 'Brak adresu!')}")
+    
     init_clob_client()
     update_real_balance()
     
@@ -365,11 +369,11 @@ def run_trading_strategy():
             with state_lock:
                 active = bot_state["active_trade"]
                 strike = bot_state["current_candle_strike"]
-                balance = bot_state["real_balance"] if IS_LIVE else bot_state["virtual_balance"]
+                balance = bot_state["real_balance"]
 
             if heartbeat_counter >= 15:
                 if not active:
-                    add_log(f"👀 Nasłuchuję i czuwam... Aktualny kurs BTC: ${current_price:.2f} | Twoje saldo: ${balance:.2f} USDC")
+                    add_log(f"👀 Nasłuchuję rynków LIVE... Kurs BTC: ${current_price:.2f} | Twoje saldo: ${balance:.2f} USDC")
                 heartbeat_counter = 0
 
             # --- DYNAMICZNY STOP-LOSS / TAKE-PROFIT ---
@@ -394,10 +398,8 @@ def run_trading_strategy():
                     }
                     with state_lock:
                         bot_state["trade_history"].append(history_entry)
-                        if not IS_LIVE:
-                            bot_state["virtual_balance"] += (active["cost"] + profit)
                         bot_state["active_trade"] = None
-                    add_log(f"🚨 Awaryjne zamknięcie pozycji ({'Take-Profit' if is_tp else 'Stop-Loss'}) przy cenie tokenu {est_token_price:.2f}")
+                    add_log(f"🚨 Awaryjne zamknięcie ({'Take-Profit' if is_tp else 'Stop-Loss'}) na prawdziwej giełdzie. Cena tokenu: {est_token_price:.2f}")
 
             # --- WARUNEK ZAKUPU (BARDZO AGRESYWNY) ---
             if not active and strike > 0:
@@ -410,17 +412,17 @@ def run_trading_strategy():
                     
                     if investment < 2.0:
                         if heartbeat_counter == 1:
-                            add_log(f"⚠️ Zbyt niskie saldo do wejścia (${investment:.2f}). Minimalny limit giełdy to 2.0 USDC.")
+                            add_log(f"⚠️ Zbyt niskie saldo do wejścia (${investment:.2f} USDC). Minimalny limit giełdy to 2.0 USDC.")
                     else:
                         markets_data = get_polymarket_15m_market()
                         if not markets_data:
-                            add_log("⚠️ Chcę kupić kontrakt, ale API Polymarket nie zwraca w tej sekundzie aktywnych rynków!")
+                            add_log("⚠️ Chcę kupić kontrakt na LIVE, ale API nie zwraca rynków!")
                         else:
                             chosen_token = markets_data["UP_TOKEN"] if buy_up else markets_data["DOWN_TOKEN"]
                             dir_str = "UP" if buy_up else "DOWN"
                             method = str(markets_data.get("market_id", "G"))[:6]
                             
-                            add_log(f"🎯 AGRESYWNY Sygnał {dir_str}! BTC: ${current_price:,.2f}. Próba kupna za {investment:.2f} USDC...")
+                            add_log(f"🎯 AGRESYWNY Sygnał {dir_str}! BTC: ${current_price:,.2f}. Próba LIVE kupna za {investment:.2f} USDC...")
                             if execute_polymarket_order(chosen_token, investment, side="BUY"):
                                 with state_lock:
                                     bot_state["active_trade"] = {
@@ -431,8 +433,6 @@ def run_trading_strategy():
                                         "btc_at_entry": current_price,
                                         "cost": investment
                                     }
-                                    if not IS_LIVE:
-                                        bot_state["virtual_balance"] -= investment
                             else:
                                 time.sleep(5)
                                 
@@ -440,7 +440,6 @@ def run_trading_strategy():
             add_log(f"🚨 Awaria wewnątrz głównej pętli decyzyjnej: {e}")
         time.sleep(2) 
 
-# --- PEŁNY ZAAWANSOWANY PANEL KONTROLNY (WEB SERWER HTML) ---
 class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args): return 
 
@@ -465,7 +464,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Krajekis Bot Dashboard</title>
+            <title>Krajekis Bot Dashboard (LIVE TRADING)</title>
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -475,21 +474,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         </head>
         <body class="bg-slate-950 text-slate-100 min-h-screen">
             <div class="max-w-7xl mx-auto px-4 py-8">
-                <div class="flex flex-col md:flex-row md:items-center md:justify-between border-b border-slate-800 pb-6 mb-8 gap-4">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between border-b border-rose-800 pb-6 mb-8 gap-4">
                     <div>
                         <div class="flex items-center gap-3">
                             <span class="flex h-3 w-3 relative">
-                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                                <span class="relative inline-flex rounded-full h-3 w-3 bg-rose-600"></span>
                             </span>
-                            <h1 class="text-2xl font-bold tracking-tight text-white">Krajekis Bot Panel</h1>
+                            <h1 class="text-2xl font-bold tracking-tight text-white">Krajekis Bot <span class="text-rose-500">LIVE MODE</span></h1>
                         </div>
-                        <p class="text-sm text-slate-400 mt-1">Automatyczny system tradingowy na rynkach BTC 15m Polymarket</p>
+                        <p class="text-sm text-slate-400 mt-1">Bot działa na prawdziwych środkach USDC Polymarket</p>
                     </div>
                     <div class="bg-slate-900 border border-slate-800 rounded-xl px-5 py-3 flex items-center gap-4">
                         <div>
-                            <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Saldo Konta</p>
-                            <p id="ui-balance" class="text-xl font-bold text-emerald-400">$0.00 USDC</p>
+                            <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Realne Saldo USDC</p>
+                            <p id="ui-balance" class="text-xl font-bold text-emerald-400">$0.00</p>
                         </div>
                         <div class="p-2 bg-emerald-500/10 rounded-lg">
                             <i class="fa-solid fa-wallet text-emerald-400 text-lg"></i>
@@ -524,7 +523,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
                 <div class="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 mb-8 shadow-xl">
                     <h2 class="text-lg font-bold mb-4 flex items-center gap-2 text-white">
-                        <i class="fa-solid fa-chart-line text-indigo-400"></i> Aktywna Pozycja (Polymarket)
+                        <i class="fa-solid fa-chart-line text-indigo-400"></i> Aktywna Pozycja LIVE
                     </h2>
                     <div id="ui-active-box" class="text-slate-400 py-4 text-center">
                         Brak otwartej pozycji. Bot czeka na sygnał strategii.
@@ -543,7 +542,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
                     <div class="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col h-[400px]">
                         <h2 class="text-lg font-bold mb-4 flex items-center gap-2 text-white">
-                            <i class="fa-solid fa-history text-indigo-400"></i> Ostatnie zamknięte pozycje
+                            <i class="fa-solid fa-history text-indigo-400"></i> Prawdziwa historia zleceń
                         </h2>
                         <div class="overflow-y-auto flex-1">
                             <table class="w-full text-left text-sm">
@@ -572,7 +571,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         const res = await fetch('/api/status');
                         const data = await res.json();
 
-                        const currentBalance = data.real_balance > 0 ? data.real_balance : data.virtual_balance;
+                        const currentBalance = data.real_balance > 0 ? data.real_balance : 0.0;
                         document.getElementById('ui-balance').innerText = `$${currentBalance.toFixed(2)} USDC`;
 
                         if (data.current_price > 0) {
